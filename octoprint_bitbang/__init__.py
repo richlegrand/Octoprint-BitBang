@@ -77,7 +77,8 @@ try:
 
         def get_template_configs(self):
             return [
-                {"type": "settings", "custom_bindings": False}
+                {"type": "settings", "custom_bindings": False},
+                {"type": "navbar", "custom_bindings": False},
             ]
 
         def get_assets(self):
