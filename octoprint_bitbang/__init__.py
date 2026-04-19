@@ -45,11 +45,25 @@ try:
             port = self._settings.global_get(["server", "port"]) or 5000
             proxy_app = OctoPrintProxy(f"localhost:{port}")
 
-            camera = detect_camera(logger=self._logger)
-            if camera:
-                self._logger.info(f"Camera: {camera['type']}")
+            # Use configured camera or auto-detect
+            camera_device = self._settings.get(["camera_device"])
+            camera_resolution = self._settings.get(["camera_resolution"]) or "640x480"
+
+            if camera_device:
+                camera = {
+                    "type": "usb",
+                    "device": camera_device,
+                    "format": "v4l2",
+                    "options": {"framerate": "30", "video_size": camera_resolution},
+                }
+                self._logger.info(f"Camera: {camera_device} at {camera_resolution}")
             else:
-                self._logger.info("No camera detected, HTTP-only mode")
+                camera = detect_camera(logger=self._logger)
+                if camera:
+                    camera.setdefault("options", {})["video_size"] = camera_resolution
+                    self._logger.info(f"Camera: {camera['type']} at {camera_resolution}")
+                else:
+                    self._logger.info("No camera detected, HTTP-only mode")
 
             pin = self._settings.get(["pin"]) or None
 
@@ -126,6 +140,69 @@ try:
                 "type": pc.localDescription.type,
             }
 
+        # -- Camera settings API --
+
+        @octoprint.plugin.BlueprintPlugin.route("/cameras", methods=["GET"])
+        def list_cameras(self):
+            """List available video capture devices."""
+            import subprocess
+            cameras = []
+            try:
+                result = subprocess.run(
+                    ["v4l2-ctl", "--list-devices"],
+                    capture_output=True, text=True, timeout=5
+                )
+                current_name = None
+                for line in result.stdout.splitlines():
+                    if not line.startswith("\t"):
+                        current_name = line.strip().rstrip(":")
+                    elif "/dev/video" in line:
+                        dev = line.strip()
+                        # Only include devices that have video formats
+                        # (filters out metadata-only nodes like /dev/video1)
+                        if self._has_video_formats(dev):
+                            cameras.append({"device": dev, "name": current_name or dev})
+            except Exception as e:
+                self._logger.warning(f"Failed to list cameras: {e}")
+            return flask.jsonify(cameras)
+
+        @octoprint.plugin.BlueprintPlugin.route("/resolutions", methods=["GET"])
+        def list_resolutions(self):
+            """List supported resolutions for a camera device."""
+            import subprocess
+            device = flask.request.args.get("device", "/dev/video0")
+            resolutions = []
+            try:
+                result = subprocess.run(
+                    ["v4l2-ctl", "--list-formats-ext", "-d", device],
+                    capture_output=True, text=True, timeout=5
+                )
+                seen = set()
+                for line in result.stdout.splitlines():
+                    line = line.strip()
+                    if line.startswith("Size: Discrete"):
+                        res = line.split("Discrete")[1].strip()
+                        if res not in seen:
+                            seen.add(res)
+                            resolutions.append(res)
+            except Exception as e:
+                self._logger.warning(f"Failed to list resolutions: {e}")
+            # Sort by width
+            resolutions.sort(key=lambda r: int(r.split("x")[0]))
+            return flask.jsonify(resolutions)
+
+        def _has_video_formats(self, device):
+            """Check if a V4L2 device has any video capture formats."""
+            import subprocess
+            try:
+                result = subprocess.run(
+                    ["v4l2-ctl", "--list-formats-ext", "-d", device],
+                    capture_output=True, text=True, timeout=5
+                )
+                return "Size: Discrete" in result.stdout
+            except Exception:
+                return False
+
         def on_shutdown(self):
             pass  # Daemon thread exits with OctoPrint
 
@@ -134,6 +211,8 @@ try:
                 "enabled": True,
                 "pin": "",
                 "url": "",
+                "camera_device": "",
+                "camera_resolution": "640x480",
             }
 
         def get_template_configs(self):

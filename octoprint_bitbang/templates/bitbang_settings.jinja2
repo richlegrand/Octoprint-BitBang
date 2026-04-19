@@ -32,9 +32,99 @@
                 <span class="help-inline">Share this link for remote access</span>
             </div>
         </div>
+
+        <h3>Camera</h3>
+
+        <div class="control-group">
+            <label class="control-label">Camera</label>
+            <div class="controls">
+                <select id="bitbang_camera_select" class="input-xlarge"
+                        data-bind="value: settings.plugins.bitbang.camera_device">
+                    <option value="">Auto-detect</option>
+                </select>
+                <button class="btn btn-mini" id="bitbang_refresh_cameras" type="button">
+                    <i class="fas fa-sync"></i>
+                </button>
+            </div>
+        </div>
+
+        <div class="control-group">
+            <label class="control-label">Resolution</label>
+            <div class="controls">
+                <select id="bitbang_resolution_select" class="input-medium"
+                        data-bind="value: settings.plugins.bitbang.camera_resolution">
+                    <option value="640x480">640x480</option>
+                </select>
+            </div>
+        </div>
     </form>
 
     <p class="muted" style="margin-top: 16px;">
-        Restart OctoPrint after changing settings.
+        Restart OctoPrint after changing camera settings.
     </p>
 </div>
+
+<script>
+(function () {
+    var cameraSelect = document.getElementById("bitbang_camera_select");
+    var resolutionSelect = document.getElementById("bitbang_resolution_select");
+    var refreshBtn = document.getElementById("bitbang_refresh_cameras");
+    if (!cameraSelect || !resolutionSelect) return;
+
+    function loadCameras() {
+        fetch("/plugin/bitbang/cameras")
+            .then(function (r) { return r.json(); })
+            .then(function (cameras) {
+                // Preserve current selection
+                var current = cameraSelect.value;
+                // Remove all except the auto-detect option
+                while (cameraSelect.options.length > 1) {
+                    cameraSelect.remove(1);
+                }
+                cameras.forEach(function (cam) {
+                    var opt = document.createElement("option");
+                    opt.value = cam.device;
+                    opt.textContent = cam.name + " (" + cam.device + ")";
+                    cameraSelect.appendChild(opt);
+                });
+                // Restore selection
+                if (current) cameraSelect.value = current;
+                // Load resolutions for current selection
+                loadResolutions(cameraSelect.value || cameras[0]?.device);
+            })
+            .catch(function () {});
+    }
+
+    function loadResolutions(device) {
+        if (!device) return;
+        fetch("/plugin/bitbang/resolutions?device=" + encodeURIComponent(device))
+            .then(function (r) { return r.json(); })
+            .then(function (resolutions) {
+                var current = resolutionSelect.value;
+                resolutionSelect.innerHTML = "";
+                resolutions.forEach(function (res) {
+                    var opt = document.createElement("option");
+                    opt.value = res;
+                    opt.textContent = res;
+                    resolutionSelect.appendChild(opt);
+                });
+                // Restore selection if still valid
+                if (resolutions.indexOf(current) >= 0) {
+                    resolutionSelect.value = current;
+                }
+            })
+            .catch(function () {});
+    }
+
+    cameraSelect.addEventListener("change", function () {
+        loadResolutions(cameraSelect.value);
+    });
+
+    if (refreshBtn) {
+        refreshBtn.addEventListener("click", loadCameras);
+    }
+
+    // Load on settings panel open
+    loadCameras();
+})();
+</script>

@@ -10,11 +10,43 @@
 (function () {
     var isBitBang = navigator.serviceWorker && navigator.serviceWorker.controller;
 
+    function addFullscreenButton(video) {
+        var wrapper = document.createElement("div");
+        wrapper.style.cssText = "position:relative;display:inline-block;width:100%;pointer-events:auto";
+
+        var btn = document.createElement("button");
+        btn.className = "btn btn-mini";
+        btn.style.cssText = "position:absolute;top:8px;right:8px;z-index:10;opacity:0.6;cursor:pointer;pointer-events:auto";
+        btn.innerHTML = '<i class="fas fa-expand"></i>';
+        btn.title = "Fullscreen";
+        btn.onmouseover = function () { btn.style.opacity = "1"; };
+        btn.onmouseout = function () { btn.style.opacity = "0.6"; };
+        btn.onclick = function () {
+            if (document.fullscreenElement) {
+                document.exitFullscreen();
+            } else {
+                var el = video.requestFullscreen ? video : wrapper;
+                var fn = el.requestFullscreen || el.webkitRequestFullscreen || el.msRequestFullscreen;
+                if (fn) {
+                    fn.call(el).catch(function (err) {
+                        console.log("[BitBang] Fullscreen failed:", err);
+                    });
+                }
+            }
+        };
+
+        video.parentNode.insertBefore(wrapper, video);
+        wrapper.appendChild(video);
+        wrapper.appendChild(btn);
+    }
+
     function replaceWebcam(video) {
         var img = document.getElementById("webcam_image");
         if (!img) return false;
         video.style.width = "100%";
+        video.style.backgroundColor = "#000";
         img.parentNode.replaceChild(video, img);
+        addFullscreenButton(video);
         return true;
     }
 
