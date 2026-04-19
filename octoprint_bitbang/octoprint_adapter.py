@@ -1,32 +1,20 @@
-"""OctoPrint BitBang adapter - extends BitBangWSGI with camera video track.
+"""OctoPrint BitBang adapter - extends BitBangASGI with camera video track.
 
-Subclasses BitBangWSGI to add a camera video track alongside HTTP tunneling.
+Subclasses BitBangASGI to add a camera video track alongside async HTTP
+reverse proxy. Fully async -- no WSGI thread pool.
 Camera source is auto-detected or explicitly configured.
-
-Usage:
-    from flask import Flask
-    from octoprint_bitbang.octoprint_adapter import OctoPrintBitBang
-
-    app = Flask(__name__)
-
-    @app.route('/')
-    def index():
-        return '<video data-bitbang-stream="camera" autoplay></video>'
-
-    adapter = OctoPrintBitBang(app)
-    adapter.run()
 """
 
-from bitbang import BitBangWSGI
+from bitbang import BitBangASGI
 from aiortc.contrib.media import MediaPlayer, MediaRelay
 
 from .camera import detect_camera
 
 
-class OctoPrintBitBang(BitBangWSGI):
+class OctoPrintBitBang(BitBangASGI):
     """BitBang adapter with camera video for OctoPrint remote access.
 
-    Extends BitBangWSGI to capture video from the best available camera
+    Extends BitBangASGI to capture video from the best available camera
     source and share it with all connected clients using MediaRelay.
     Falls back to HTTP-only mode if no camera is found.
     """

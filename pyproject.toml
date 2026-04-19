@@ -12,7 +12,7 @@ authors = [{name = "Rich LeGrand"}]
 requires-python = ">=3.10"
 dependencies = [
     "bitbang>=0.1.46",
-    "flask",
+    "aiohttp>=3.8.0",
 ]
 
 [project.scripts]

@@ -6,25 +6,41 @@ Run with:
     python -m octoprint_bitbang.app --proxy localhost:8080 --camera /dev/video2
 """
 
-from flask import Flask, render_template, send_file
 from .octoprint_adapter import OctoPrintBitBang
-
 import os
 
-_dir = os.path.dirname(__file__)
 
-app = Flask(__name__, template_folder=_dir)
+def _make_test_app():
+    """Create a simple ASGI test app serving the prototype HTML page."""
+    _dir = os.path.dirname(__file__)
 
+    async def test_app(scope, receive, send):
+        if scope["type"] != "http":
+            return
+        path = scope.get("path", "/")
 
-@app.route('/favicon.ico')
-def favicon():
-    return send_file(os.path.join(_dir, 'static', 'favicon.png'),
-                     mimetype='image/png')
+        if path == "/favicon.ico":
+            favicon_path = os.path.join(_dir, "static", "favicon.png")
+            try:
+                with open(favicon_path, "rb") as f:
+                    body = f.read()
+                await send({"type": "http.response.start", "status": 200,
+                            "headers": [(b"content-type", b"image/png")]})
+                await send({"type": "http.response.body", "body": body})
+            except FileNotFoundError:
+                await send({"type": "http.response.start", "status": 404, "headers": []})
+                await send({"type": "http.response.body", "body": b""})
+            return
 
+        # Serve index.html for everything else
+        html_path = os.path.join(_dir, "index.html")
+        with open(html_path, "rb") as f:
+            body = f.read()
+        await send({"type": "http.response.start", "status": 200,
+                    "headers": [(b"content-type", b"text/html")]})
+        await send({"type": "http.response.body", "body": body})
 
-@app.route('/')
-def index():
-    return render_template('index.html')
+    return test_app
 
 
 def main():
@@ -39,15 +55,14 @@ def main():
                         help='Camera source override (e.g. /dev/video0, rtsp://...)')
     args = parser.parse_args()
 
-    # Choose WSGI app: reverse proxy or built-in test page
     ws_target = None
     if args.proxy:
-        from .proxy import ReverseProxy
-        wsgi_app = ReverseProxy(args.proxy)
-        ws_target = args.proxy  # WebSocket bridging to same target
+        from bitbang.proxy import ReverseProxyASGI
+        asgi_app = ReverseProxyASGI(args.proxy)
+        ws_target = args.proxy
         print(f"Proxying to {args.proxy}")
     else:
-        wsgi_app = app
+        asgi_app = _make_test_app()
 
     camera_source = None
     if args.camera:
@@ -68,7 +83,7 @@ def main():
             }
 
     adapter = OctoPrintBitBang(
-        wsgi_app,
+        asgi_app,
         camera_source=camera_source,
         ws_target=ws_target,
         **bitbang_kwargs(args, program_name='octoprint'),

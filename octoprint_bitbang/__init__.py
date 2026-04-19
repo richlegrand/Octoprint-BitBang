@@ -11,7 +11,7 @@ try:
     import threading
     import octoprint.plugin
 
-    from .proxy import ReverseProxy
+    from .proxy import OctoPrintProxy
     from .octoprint_adapter import OctoPrintBitBang
     from .camera import detect_camera
 
@@ -43,7 +43,7 @@ try:
 
         def _start_bitbang(self):
             port = self._settings.global_get(["server", "port"]) or 5000
-            proxy_app = ReverseProxy(f"localhost:{port}")
+            proxy_app = OctoPrintProxy(f"localhost:{port}")
 
             camera = detect_camera(logger=self._logger)
             if camera:
@@ -142,10 +142,19 @@ try:
                 {"type": "navbar", "custom_bindings": False},
             ]
 
+        def get_template_vars(self):
+            return {"plugin_version": "0.1.0"}
+
         def get_assets(self):
             return {
                 "js": ["js/bitbang.js"],
             }
+
+        def is_blueprint_csrf_protected(self):
+            return True
+
+        def is_template_autoescaped(self):
+            return True
 
     __plugin_implementation__ = BitBangPlugin()
 
