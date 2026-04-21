@@ -96,8 +96,7 @@
     }
 
     function loadResolutions(device) {
-        if (!device) return;
-        fetch("/plugin/bitbang/resolutions?device=" + encodeURIComponent(device))
+        fetch("/plugin/bitbang/resolutions?device=" + encodeURIComponent(device || ""))
             .then(function (r) { return r.json(); })
             .then(function (resolutions) {
                 var current = resolutionSelect.value;

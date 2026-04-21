@@ -39,10 +39,23 @@ try:
             self._local_pcs = set()  # track local WebRTC peer connections
 
         def on_after_startup(self):
+            self._probe_picamera2_sensor()
             if not self._settings.get_boolean(["enabled"]):
                 self._logger.info("BitBang disabled in settings")
                 return
             self._start_bitbang()
+
+        def _probe_picamera2_sensor(self):
+            # Cache before the adapter opens the camera — picamera2 can't be
+            # opened twice, so the resolutions endpoint relies on this.
+            self._picam2_sensor_size = None
+            try:
+                from picamera2 import Picamera2
+                cam = Picamera2()
+                self._picam2_sensor_size = cam.sensor_resolution
+                cam.close()
+            except Exception:
+                pass
 
         def _start_bitbang(self):
             port = self._settings.global_get(["server", "port"]) or 5000
@@ -63,7 +76,11 @@ try:
             else:
                 camera = detect_camera(logger=self._logger)
                 if camera:
-                    camera.setdefault("options", {})["video_size"] = camera_resolution
+                    if camera["type"] == "picamera2":
+                        w, h = (int(x) for x in camera_resolution.split("x"))
+                        camera["size"] = (w, h)
+                    else:
+                        camera.setdefault("options", {})["video_size"] = camera_resolution
                     self._logger.info(f"Camera: {camera['type']} at {camera_resolution}")
                 else:
                     self._logger.info("No camera detected, HTTP-only mode")
@@ -119,7 +136,30 @@ try:
                 self._logger.error(f"Local WebRTC offer failed: {e}")
                 return flask.jsonify({"error": str(e)}), 500
 
+        def _strip_non_h264(self, sdp):
+            """Remove non-H.264 video codecs from an SDP so aiortc has no
+            choice but to negotiate H.264 (our track is pre-encoded H.264)."""
+            import re
+            lines = sdp.split("\r\n")
+            h264_pts = [m.group(1) for m in (re.match(r"a=rtpmap:(\d+) H264/", l) for l in lines) if m]
+            rtx_pts = [m.group(1) for m in (re.match(r"a=fmtp:(\d+) apt=(\d+)", l) for l in lines) if m and m.group(2) in h264_pts]
+            keep = set(h264_pts) | set(rtx_pts)
+            out = []
+            for line in lines:
+                m = re.match(r"(m=video \d+ \S+) (.+)", line)
+                if m:
+                    header, pts = m.groups()
+                    kept = [p for p in pts.split() if p in keep]
+                    out.append(f"{header} {' '.join(kept)}")
+                    continue
+                m = re.match(r"a=(rtpmap|fmtp|rtcp-fb):(\d+)", line)
+                if m and m.group(2) not in keep:
+                    continue
+                out.append(line)
+            return "\r\n".join(out)
+
         async def _handle_local_offer(self, offer_sdp, offer_type):
+            offer_sdp = self._strip_non_h264(offer_sdp)
             pc = RTCPeerConnection()
             self._local_pcs.add(pc)
 
@@ -129,12 +169,24 @@ try:
                     self._local_pcs.discard(pc)
                     await pc.close()
 
-            # Add camera video track
-            pc.addTrack(self._adapter.relay.subscribe(self._adapter.player.video))
-
-            # Set remote offer and create answer
+            # Order matters: set remote description first so aiortc creates
+            # the transceiver matching the client's mid. Then addTrack reuses
+            # it and setCodecPreferences applies to the right one. Otherwise
+            # the answer ends up negotiating VP8.
             offer = RTCSessionDescription(sdp=offer_sdp, type=offer_type)
             await pc.setRemoteDescription(offer)
+
+            sender = pc.addTrack(self._adapter.relay.subscribe(self._adapter.player.video))
+
+            # Force H.264 — our track yields pre-encoded H.264 av.Packets.
+            from aiortc.rtcrtpsender import RTCRtpSender
+            h264 = [c for c in RTCRtpSender.getCapabilities("video").codecs
+                    if c.name == "H264"]
+            for t in pc.getTransceivers():
+                if t.sender is sender:
+                    t.setCodecPreferences(h264)
+                    break
+
             answer = await pc.createAnswer()
             await pc.setLocalDescription(answer)
 
@@ -173,7 +225,13 @@ try:
         def list_resolutions(self):
             """List supported resolutions for a camera device."""
             import subprocess
-            device = flask.request.args.get("device", "/dev/video0")
+            device = flask.request.args.get("device", "")
+            # Auto-detect: if picamera2 is available, use sensor-aware list
+            if not device:
+                picam_res = self._picamera2_resolutions()
+                if picam_res is not None:
+                    return flask.jsonify(picam_res)
+                device = "/dev/video0"
             resolutions = []
             try:
                 result = subprocess.run(
@@ -193,6 +251,28 @@ try:
             # Sort by width
             resolutions.sort(key=lambda r: int(r.split("x")[0]))
             return flask.jsonify(resolutions)
+
+        # Standard resolutions offered for Pi CSI cameras, filtered by sensor
+        # max. Mix of 4:3 and 16:9 so users can pick their preferred ratio.
+        _PICAMERA2_STANDARD_RESOLUTIONS = [
+            (640, 480), (800, 600),
+            (1280, 720), (1280, 960),
+            (1920, 1080),
+            (2028, 1520),
+            (4056, 3040),
+        ]
+
+        def _picamera2_resolutions(self):
+            """Return list of supported resolutions for the Pi CSI sensor, or None."""
+            sensor = getattr(self, "_picam2_sensor_size", None)
+            if not sensor:
+                return None
+            max_w, max_h = sensor
+            return [
+                f"{w}x{h}"
+                for (w, h) in self._PICAMERA2_STANDARD_RESOLUTIONS
+                if w <= max_w and h <= max_h
+            ]
 
         def _has_video_formats(self, device):
             """Check if a V4L2 device has any video capture formats."""

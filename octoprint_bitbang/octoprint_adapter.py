@@ -59,13 +59,33 @@ class OctoPrintBitBang(BitBangASGI):
                 print(f"Warning: Could not open camera '{source['device']}': {e}")
 
         elif source["type"] == "picamera2":
-            # Pi CSI camera - placeholder for Phase 3
-            print("picamera2 detected but not yet supported - HTTP-only mode")
+            # Pi CSI camera - picamera2 H264Encoder (hw on Pi 4, sw on Pi 5)
+            # emits Annex-B H.264 that aiortc packetizes without re-encoding.
+            try:
+                from .pi_h264_source import PiH264Track
+                size = source.get("size", (640, 480))
+                framerate = source.get("framerate", 30)
+                bitrate = source.get("bitrate", 4_000_000)
+                self.player = PiH264Track(
+                    size=size, framerate=framerate, bitrate=bitrate,
+                )
+                print(f"Opened Pi CSI camera via H264Encoder ({size[0]}x{size[1]}@{framerate})")
+            except Exception as e:
+                print(f"Warning: Could not open Pi CSI camera: {e}")
 
     def setup_peer_connection(self, pc, client_id):
         """Add camera video track to peer connection."""
         if self.player and self.player.video:
-            pc.addTrack(self.relay.subscribe(self.player.video))
+            sender = pc.addTrack(self.relay.subscribe(self.player.video))
+            # Our track yields pre-encoded H.264 av.Packets; force H.264-only
+            # so aiortc doesn't negotiate VP8 and packetize our bytes as VP8.
+            from aiortc.rtcrtpsender import RTCRtpSender
+            h264 = [c for c in RTCRtpSender.getCapabilities("video").codecs
+                    if c.name == "H264"]
+            for t in pc.getTransceivers():
+                if t.sender is sender:
+                    t.setCodecPreferences(h264)
+                    break
             print(f"Added camera video track for {client_id}")
 
     def get_stream_metadata(self):
@@ -78,6 +98,8 @@ class OctoPrintBitBang(BitBangASGI):
         """Close peer connections and media player."""
         await super().close()
         if self.player:
-            if self.player.video:
+            if hasattr(self.player, "stop"):
+                self.player.stop()
+            elif self.player.video:
                 self.player.video.stop()
             self.player = None

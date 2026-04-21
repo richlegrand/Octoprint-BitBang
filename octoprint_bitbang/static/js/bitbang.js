@@ -41,10 +41,33 @@
     }
 
     function replaceWebcam(video) {
-        var img = document.getElementById("webcam_image");
-        if (!img) return false;
         video.style.width = "100%";
         video.style.backgroundColor = "#000";
+
+        // OctoPrint 1.11+ Classic Webcam hides its default containers until
+        // a stream URL is configured. Mount into the outer container so
+        // we're visible regardless of the user's webcam settings.
+        var classicContainer = document.getElementById("classicwebcam_container");
+        if (classicContainer) {
+            // Knockout visibility bindings on classicwebcam's built-in
+            // containers keep re-showing them, so use a stylesheet rule
+            // which beats Knockout's inline style.display assignments.
+            if (!document.getElementById("bitbang-hide-classicwebcam")) {
+                var style = document.createElement("style");
+                style.id = "bitbang-hide-classicwebcam";
+                style.textContent =
+                    "#webcam_video_container, #webcam_img_container " +
+                    "{ display: none !important; }";
+                document.head.appendChild(style);
+            }
+            classicContainer.appendChild(video);
+            addFullscreenButton(video);
+            return true;
+        }
+
+        // Fallback for other layouts: replace #webcam_image in place.
+        var img = document.getElementById("webcam_image");
+        if (!img) return false;
         img.parentNode.replaceChild(video, img);
         addFullscreenButton(video);
         return true;
@@ -53,6 +76,7 @@
     if (isBitBang) {
         // Remote mode: bootstrap.js wires the track via data-bitbang-stream
         function injectRemote() {
+            if (document.querySelector("video[data-bitbang-stream]")) return;
             var video = document.createElement("video");
             video.setAttribute("data-bitbang-stream", "camera");
             video.autoplay = true;
@@ -77,7 +101,9 @@
     } else {
         // Local mode: direct WebRTC to the plugin's signaling endpoint
         function startLocalVideo() {
+            if (document.querySelector("video[data-bitbang-local]")) return;
             var video = document.createElement("video");
+            video.setAttribute("data-bitbang-local", "1");
             video.autoplay = true;
             video.playsinline = true;
             video.muted = true;
@@ -86,7 +112,12 @@
             var pc = new RTCPeerConnection();
 
             pc.ontrack = function (event) {
-                video.srcObject = event.streams[0];
+                if (event.streams && event.streams[0]) {
+                    video.srcObject = event.streams[0];
+                } else {
+                    if (!video.srcObject) video.srcObject = new MediaStream();
+                    video.srcObject.addTrack(event.track);
+                }
             };
 
             // Need to add a transceiver to receive video
