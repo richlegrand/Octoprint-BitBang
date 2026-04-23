@@ -45,7 +45,7 @@
 
     function addBrightnessControl(wrapper, initialValue) {
         var container = document.createElement("div");
-        container.style.cssText = "position:absolute;bottom:8px;left:8px;right:40px;display:flex;align-items:center;gap:6px;opacity:0.6;z-index:10;pointer-events:auto;transition:opacity 0.2s;";
+        container.style.cssText = "position:absolute;bottom:8px;right:8px;display:flex;align-items:center;gap:6px;opacity:0.6;z-index:10;pointer-events:auto;transition:opacity 0.2s;";
         container.onmouseover = function () { container.style.opacity = "1"; };
         container.onmouseout = function () { container.style.opacity = "0.6"; };
 
